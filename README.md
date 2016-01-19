@@ -88,23 +88,37 @@ appStore.commit(); // commit staged changes
 
 ## API
 
-#### getState(keyValue, notSetValue)
+#### getState(keyPath)
 
-#### dispatch(keyValue, action)
+If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `keyPath`.
 
-#### subscribe(keyValue, listener)
+It is equal to the last **committed value** (see transactions) returned by the reducer at `keyPath`.
 
-#### replaceReducer(keyValue, nextReducer)
+#### dispatch(keyPath, action)
+
+If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `keyPath`.
+
+#### subscribe(keyPath, listener)
+
+If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `keyPath`.
+
+#### replaceReducer(keyPath, nextReducer)
+
+If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `keyPath`.
 
 #### getTree()
 
-#### observable(keyValue)
+#### observable(keyPath)
 
 #### reset()
 
 #### transaction(flag)
 
 #### commit()
+
+## Transactions
+
+*TBA*
 
 ## Implementation
 
