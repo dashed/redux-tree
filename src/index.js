@@ -140,7 +140,7 @@ const convertTree = (createStore, __wrapReducer, cursor, path) => {
 
         const reducer = maybeTree;
 
-        // convert leaf into immutable map
+        // convert leaf into empty immutable map
         cursor.update(() => {
             return Immutable.Map();
         });
