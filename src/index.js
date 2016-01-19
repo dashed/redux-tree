@@ -262,17 +262,16 @@ const createStoreFromTree = (sourceTree, createStore) => {
          * akin to getState() via path
          *
          * @param  {[type]} keyValue    [description]
-         * @param  {[type]} notSetValue [description]
          *
          * @return {[type]}             [description]
          */
-        getState(keyValue, notSetValue) {
+        getState(keyValue) {
 
             const cursor = sourceTree.cursor(keyValue).cursor([VALUE]);
 
             invariant(cursor.exists(), `Invalid path. Given: ${keyValue}`);
 
-            return cursor.deref(notSetValue);
+            return cursor.deref();
         },
 
         /**
