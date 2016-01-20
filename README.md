@@ -94,17 +94,25 @@ If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `ke
 
 It is equal to the last **committed value** (see transactions) returned by the reducer at `keyPath`.
 
+This method is akin to [redux.Store.getState](https://github.com/rackt/redux/blob/master/docs/api/Store.md#getstate).
+
 #### dispatch(keyPath, action)
 
 If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `keyPath`.
+
+This method is akin to [redux.Store.dispatch](https://github.com/rackt/redux/blob/master/docs/api/Store.md#dispatch).
 
 #### subscribe(keyPath, listener)
 
 If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `keyPath`.
 
+This method is akin to [redux.Store.subscribe](https://github.com/rackt/redux/blob/master/docs/api/Store.md#subscribelistener).
+
 #### replaceReducer(keyPath, nextReducer)
 
 If `keyPath` is not an `Array`, it will be converted into `[keyPath]` as the `keyPath`.
+
+This method is akin to [redux.Store.replaceReducer](https://github.com/rackt/redux/blob/master/docs/api/Store.md#replacereducernextreducer).
 
 #### getTree()
 
