@@ -1,36 +1,16 @@
-// dependencies
 const Immutable = require('immutable');
 const minitrue = require('minitrue');
 const _ = require('lodash');
 const invariant = require('invariant');
 
-// helpers
-const isImmutable = (obj) => {
-    return Immutable.Iterable.isIterable(obj);
-};
-
-const makeState = function(value) {
-    return {
-        v: value
-    };
-};
-
-const getState = function(state) {
-    return state.v;
-};
-
-const setState = function(state, value) {
-    state.v = value;
-};
-
 // sentinel values
-const IS_REDUX = {};
+const IS_REDUX = {t: 'IS_REDUX'};
 const STORE = {k: 'STORE'};
 const VALUE = {k: 'VALUE'};
 const NOT_SET = {};
 // sentinel values to differentiate staged tree and the single-source of truth tree
-const SOURCE = {};
-const STAGED = {};
+const SOURCE = {t: 'SOURCE'};
+const STAGED = {t: 'STAGED'};
 
 // actions
 const RESET = {a: 'RESET'};
@@ -53,204 +33,169 @@ const actionsCreate = {
         };
     },
 
-    reduceAtPathWith(store, action, isTransaction) {
+    reduceAtPathWith(store, action, isTransaction, sourceCursor, stagedCursor) {
 
         return {
             type: REDUCE_AT_PATH,
             payload: {
                 store,
                 action,
-                isTransaction
+                isTransaction,
+                sourceCursor,
+                stagedCursor
             }
         };
-
     }
 
 };
 
-const wrapReducer = (stateTree, path, reducer) => {
-
-    const sourceTreeCursor = stateTree.cursor(SOURCE).deref();
-    const stagedTreeCursor = stateTree.cursor(STAGED);
+const wrapReducer = (reducer) => {
 
     return (state, wrappedAction) => {
 
         if(wrappedAction.type !== REDUCE_AT_PATH) {
-
-            const newState = reducer.call(void 0, getState(state), wrappedAction);
-            setState(state, newState);
-
-            sourceTreeCursor.cursor(path).cursor(VALUE).update(() => {
-                return newState;
-            });
-
-            stagedTreeCursor.update((stagedTree) => {
-                return stagedTree.updateIn(path, Immutable.Map(), (subtree) => {
-                    return subtree.set(VALUE, newState);
-                });
-            });
-
+            state = reducer.call(void 0, state, wrappedAction);
             return state;
         }
 
-        const {action, isTransaction} = wrappedAction.payload;
+        const {payload} = wrappedAction;
 
-        const newState = reducer.call(void 0, getState(state), action);
-        setState(state, newState);
+        const {action, isTransaction, sourceCursor, stagedCursor} = payload;
+
+        state = reducer.call(void 0, state, action);
 
         if(!isTransaction) {
-            sourceTreeCursor.cursor(path).cursor(VALUE).update(() => {
-                return newState;
+
+            sourceCursor.update(() => {
+                return state;
             });
         }
 
-        stagedTreeCursor.update((stagedTree) => {
-            return stagedTree.updateIn(path, Immutable.Map(), (subtree) => {
-                return subtree.set(VALUE, newState);
-            });
+        stagedCursor.update(() => {
+            return state;
         });
 
         return state;
     };
 };
 
-/**
- * Convert each leaf into a wrapped redux store
- *
- * @param  {[type]} createStore [description]
- * @param  {[type]} state       [description]
- * @param  {[type]} path        [description]
- *
- * @return {[type]}             [description]
- */
-const convertTree = (createStore, __wrapReducer, cursor, path) => {
+const buildFromSchema = (destCursor, schemaCursor, createStore) => {
 
-    const maybeTree = cursor.deref();
+    let maybeTree = schemaCursor.deref();
 
     if(maybeTree && _.isObject(maybeTree) && maybeTree.__REDUX_TREE === IS_REDUX) {
-        maybeTree.deref().forEach((value, key) => {
-            convertTree(createStore, __wrapReducer, maybeTree.cursor(key), path.concat([key]));
+
+        maybeTree.forEach((value, key) => {
+            buildFromSchema(destCursor.cursor(key), maybeTree.cursor(key), createStore);
         });
-        return;
-    }
-
-    if(!isImmutable(maybeTree)) {
-
-        invariant(_.isFunction(maybeTree), `Expected state to be a reducing function at path ${String(path)}. Given ${maybeTree}`);
-
-        const reducer = maybeTree;
-
-        // convert leaf into empty immutable map
-        cursor.update(() => {
-            return Immutable.Map();
-        });
-
-        const wrappedReduxStore = createStore(__wrapReducer(path, reducer), makeState());
-
-        const value = getState(wrappedReduxStore.getState());
-
-        cursor.cursor(VALUE).update(() => value);
-        cursor.cursor(STORE).update(() => wrappedReduxStore);
 
         return;
     }
 
-    maybeTree.forEach((value, key) => {
-        convertTree(createStore, __wrapReducer, cursor.cursor(key), path.concat([key]));
-    });
+    if(isImmutable(maybeTree)) {
 
+        const schemaIterable = maybeTree;
+
+        schemaIterable.forEach((value, key) => {
+            buildFromSchema(destCursor.cursor(key), schemaCursor.cursor(key), createStore);
+        });
+
+        return;
+    }
+
+    const reducer = maybeTree;
+    const path = destCursor.path();
+
+    invariant(_.isFunction(reducer), `Expected state to be a reducing function at path ${path}. Given ${reducer}`);
+
+    const wrappedReduxStore = createStore(wrapReducer(reducer));
+
+    const value = wrappedReduxStore.getState();
+
+    destCursor.cursor(VALUE).update(() => value);
+    destCursor.cursor(STORE).update(() => wrappedReduxStore);
 };
 
-// buildTree: Probe => Probe
-const buildTree = (createStore, tree) => {
+const buildStoreTreeWith = (schemaTree, createStore) => {
 
-    invariant(tree && _.isObject(tree) && tree.__REDUX_TREE === IS_REDUX, `Not a redux-tree. Given ${tree}`);
+    invariant(
+        schemaTree &&
+        _.isObject(schemaTree) &&
+        schemaTree.__REDUX_TREE === IS_REDUX, `Not a redux-tree. Given ${schemaTree}`);
 
-    // this splits up state tree into a single source of truth and a tree with staged changes
-    const override = minitrue({});
-    override.cursor(SOURCE).update(() => {
-        return tree;
-    });
+    const storeTree = minitrue({});
 
-    // create empty snapshot
-    override.cursor(STAGED).update(() => {
+    storeTree.cursor(SOURCE).update(() => {
         return Immutable.Map();
     });
 
-    // build phase
+    buildFromSchema(storeTree.cursor(SOURCE), schemaTree, createStore);
 
-    const __wrapReducer = wrapReducer.bind(void 0, override);
-
-    convertTree(createStore, __wrapReducer, tree, []);
-
-    // set snapshot of state tree
-    override.cursor(STAGED).update(() => {
-        return tree.deref();
+    storeTree.cursor(STAGED).update(() => {
+        return storeTree.cursor(SOURCE).deref();
     });
 
-    return override;
+    return storeTree;
 };
 
 // handles reseting staged changes, or commits
-const reduceWithTree = (stateTree, transacAction) => {
+const reduceWithTree = (storeTree, transacAction) => {
 
     switch(transacAction.type) {
 
     case RESET:
 
-        stateTree.cursor(STAGED).update(() => {
-            const sourceTree = stateTree.cursor(SOURCE).deref();
-            return sourceTree.deref();
+        storeTree.cursor(STAGED).update(() => {
+            return storeTree.cursor(SOURCE).deref();
         });
 
         break;
 
     case COMMIT:
 
-        const sourceTree = stateTree.cursor(SOURCE).deref();
-        let stagedTree = stateTree.cursor(STAGED).deref();
+        let stagedTree = storeTree.cursor(STAGED).deref();
 
-        sourceTree.update((previous) => {
-            stagedTree = previous.mergeDeep(stagedTree);
+        storeTree.cursor(SOURCE).update((prevTree) => {
 
-            // save new snapshot
-            stateTree.cursor(STAGED).update(function() {
-                return stagedTree;
-            });
+            stagedTree = prevTree.mergeDeep(stagedTree);
 
             return stagedTree;
         });
 
-        // NOTE TO SELF: is this the same as above?
-        // sourceTree.update((previous) => {
-        //     return stagedTree;
-        // });
+        storeTree.cursor(STAGED).update(() => {
+            return stagedTree;
+        });
 
         break;
 
     case REDUCE_AT_PATH:
 
-        const {store, action, isTransaction} = transacAction.payload;
+        const {store, action, isTransaction, sourceCursor, stagedCursor} = transacAction.payload;
 
         store.dispatch({
             type: REDUCE_AT_PATH,
             payload: {
                 action,
-                isTransaction
+                isTransaction,
+                sourceCursor,
+                stagedCursor
             }
         });
 
         break;
     }
 
-    return stateTree;
+    return storeTree;
 };
 
-const createStoreFromTree = (sourceTree, createStore) => {
+const createStoreFromTree = (schemaTree, createStore) => {
 
-    const stateTree = buildTree(createStore, sourceTree);
+    const storeTree = buildStoreTreeWith(schemaTree, createStore);
 
-    const store = createStore(reduceWithTree, stateTree);
+    const superStore = createStore(reduceWithTree, storeTree);
+
+    const sourceTree = storeTree.cursor(SOURCE);
+    const stagedTree = storeTree.cursor(STAGED);
 
     let isTransaction = false;
 
@@ -258,53 +203,45 @@ const createStoreFromTree = (sourceTree, createStore) => {
 
         // usual redux store methods
 
-        /**
-         * akin to getState() via path
-         *
-         * @param  {[type]} keyValue    [description]
-         *
-         * @return {[type]}             [description]
-         */
-        getState(keyValue) {
+        getState(keyPath) {
 
-            const cursor = sourceTree.cursor(keyValue).cursor([VALUE]);
+            const cursorValue = sourceTree.cursor(keyPath).cursor(VALUE);
 
-            invariant(cursor.exists(), `Invalid path. Given: ${keyValue}`);
+            invariant(cursorValue.exists(), `Invalid path. Given: ${keyPath}`);
 
-            return cursor.deref();
+            return cursorValue.deref();
         },
 
-        /**
-         * dispatch a given action to a reducer at keyValue path
-         *
-         * @param  {[type]} keyValue [description]
-         * @param  {[type]} action   [description]
-         *
-         * @return {[type]}          [description]
-         */
-        dispatch(keyValue, action) {
+        dispatch(keyPath, action) {
 
-            const cursorAtPath = sourceTree.cursor(keyValue);
+            const sourceCursor = sourceTree.cursor(keyPath);
+            const stagedCursor = stagedTree.cursor(keyPath);
 
-            // fetch redux store at keyValue path
-            const cursorStore = cursorAtPath.cursor(STORE);
+            // fetch redux store at keyPath
+            const cursorStore = sourceCursor.cursor(STORE);
 
-            invariant(cursorStore.exists(), `Invalid path. Given: ${keyValue}`);
+            invariant(cursorStore.exists(), `Invalid path. Given: ${keyPath}`);
 
             const reduxStore = cursorStore.deref(NOT_SET);
 
-            invariant(reduxStore !== NOT_SET, `Invalid redux store at path. Found: ${reduxStore} at ${keyValue}`);
+            invariant(reduxStore !== NOT_SET, `Invalid redux store at path. Found: ${reduxStore} at ${keyPath}`);
 
-            store.dispatch(actionsCreate.reduceAtPathWith(reduxStore, action, isTransaction));
+            superStore.dispatch(actionsCreate.reduceAtPathWith(
+                reduxStore,
+                action,
+                isTransaction,
+                sourceCursor.cursor(VALUE),
+                stagedCursor.cursor(VALUE)
+            ));
 
             return action;
         },
 
-        subscribe(keyValue, listener) {
+        subscribe(keyPath, listener) {
 
             invariant(_.isFunction(listener), `Expected function. Given ${listener}`);
 
-            const cursor = sourceTree.cursor(keyValue);
+            const cursor = sourceTree.cursor(keyPath);
             const cursorVal = cursor.cursor(VALUE);
 
             if(!cursorVal.exists()) {
@@ -314,11 +251,25 @@ const createStoreFromTree = (sourceTree, createStore) => {
             return cursorVal.observe(listener);
         },
 
-        replaceReducer(keyValue, nextReducer) {
-            const cursor = sourceTree.cursor(keyValue);
-            cursor.cursor([STORE]).update((wrappedStore) => {
-                wrappedStore.replaceReducer(wrapReducer(stateTree, cursor.path(), nextReducer));
-                return wrappedStore;
+        replaceReducer(keyPath, nextReducer) {
+
+            const sourceCursor = sourceTree.cursor(keyPath);
+            const sourceCursorStore = sourceCursor.cursor(STORE);
+
+            sourceCursorStore.update((store) => {
+                store.replaceReducer(wrapReducer(nextReducer));
+                return store;
+            });
+
+            const stagedCursor = stagedTree.cursor(keyPath);
+            stagedCursor.cursor(STORE).update((store) => {
+
+                if(sourceCursorStore.deref() === store) {
+                    return store;
+                }
+
+                store.replaceReducer(wrapReducer(nextReducer));
+                return store;
             });
         },
 
@@ -328,15 +279,15 @@ const createStoreFromTree = (sourceTree, createStore) => {
             return sourceTree;
         },
 
-        observable(keyValue) {
+        observable(keyPath) {
+
+            const cursor = sourceTree.cursor(keyPath);
+            const cursorVal = cursor.cursor(VALUE);
+
             return {
                 observe(listener) {
 
                     invariant(_.isFunction(listener), `Expected function. Given ${listener}`);
-
-                    // TODO: refactor/cleanup
-                    const cursor = sourceTree.cursor(keyValue);
-                    const cursorVal = cursor.cursor([VALUE]);
 
                     if(!cursorVal.exists()) {
                         return cursor.observe(listener);
@@ -348,7 +299,7 @@ const createStoreFromTree = (sourceTree, createStore) => {
         },
 
         reset() {
-            return store.dispatch(actionsCreate.reset());
+            return superStore.dispatch(actionsCreate.reset());
         },
 
         transaction(newValue = NOT_SET) {
@@ -361,10 +312,10 @@ const createStoreFromTree = (sourceTree, createStore) => {
         },
 
         commit() {
-            return store.dispatch(actionsCreate.commit());
-        },
-    };
+            return superStore.dispatch(actionsCreate.commit());
+        }
 
+    };
 };
 
 const reduxTree = (obj) => {
@@ -379,4 +330,10 @@ const reduxTree = (obj) => {
 module.exports = {
     tree: reduxTree,
     createStore: createStoreFromTree
+};
+
+/* helpers */
+
+const isImmutable = (obj) => {
+    return Immutable.Iterable.isIterable(obj);
 };
