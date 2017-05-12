@@ -1,6 +1,8 @@
+# DEPRECATED. --- Rewritten to: [redux-lens](https://github.com/dashed/redux-lens)
+
 # redux-tree
 
-> Organize your redux stores in a tree-like structure 
+> Organize your redux stores in a tree-like structure
 
 **NOTE: WORK IN PROGRESS; API IS UNSTABLE UNTIL `v1.x`**
 
@@ -56,8 +58,8 @@ const appTree = reduxTree({
 });
 
 // 3. Initialize a redux-like store from a given redux-tree:
-// 
-// Each reducer at the leaves of the tree are converted into redux stores 
+//
+// Each reducer at the leaves of the tree are converted into redux stores
 // via the given `createStore` function (which may be enhanced).
 const appStore = createStoreFromTree(createStore, appTree);
 
